@@ -1,0 +1,33 @@
+services:
+  # ── API Server (always-on) ───────────────────────────────────────────
+  pipeline-api:
+    build: .
+    container_name: web-crawler-api
+    command: serve
+    ports:
+      - "8000:8000"
+    volumes:
+      - crawler_data:/app/jobs
+      - ${PURUCRAWLER_DOWNLOADS:-C:/Users/Purvik/Downloads/PuruCrawler}:/app/downloads
+    environment:
+      - PIPELINE_DATA_DIR=/app/jobs
+      - PYTHONUNBUFFERED=1
+      - PORT=8000
+      - WORKERS=1
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+
+volumes:
+  crawler_data:
+    driver: local

@@ -1,0 +1,26 @@
+{
+  "created": "2026-02-22T20:15:28.448688+00:00",
+  "total_files": 4,
+  "files": [
+    {
+      "path": "crawl_report.json",
+      "size_bytes": 140,
+      "sha256": "f1573e8ce676d22cb9ebdc9788e6c6a9a7f713245ce8847bc757ee48f5336edd"
+    },
+    {
+      "path": "pages.parquet",
+      "size_bytes": 5289,
+      "sha256": "a5593e5a10b108950ee934211718009888e740d1b45be868a9a2e85ddca74dd5"
+    },
+    {
+      "path": "raw_html/example.com/fb91d75a6bb43078.html.gz",
+      "size_bytes": 401,
+      "sha256": "d12d9cdd629635310377753d94ef4c29a854ce3a683407a7755bc9e553aad960"
+    },
+    {
+      "path": "raw_html/example.com/fb91d75a6bb43078.meta.json",
+      "size_bytes": 215,
+      "sha256": "8d71e3e0168570ebfef0629e7bde313423b9168e625e954349c2dd8eb18949af"
+    }
+  ]
+}
