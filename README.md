@@ -1,248 +1,95 @@
 # Website Ingestion Pipeline
 
-A modular web crawling and data extraction pipeline that crawls websites using breadth-first search, extracts structured content, and exports datasets in multiple formats. Supports both a command-line interface and a REST API.
+> Crawl a website, extract reusable content and media metadata, and export an analysis-ready dataset.
 
----
+Website Ingestion Pipeline is a Python web crawler for small-to-medium, same-site crawls. It follows links breadth-first from a seed URL, extracts readable content, images, and link information, then writes the result as Parquet, CSV, or JSONL. Use it from the command line, through a FastAPI service, or in Docker.
 
-## Features
+## Capabilities
 
-- **BFS Crawl Engine** — Configurable depth, page limits, and rate limiting
-- **Robots.txt Compliance** — Respects crawl rules and crawl-delay directives
-- **Content Extraction** — Titles, headings, meta descriptions, body text, images, and links
-- **Dynamic Rendering** — Playwright/Chromium fallback for JavaScript-heavy pages
-- **Multiple Export Formats** — Parquet, CSV, and JSONL
-- **Raw HTML Archival** — Gzip-compressed HTML with metadata sidecars
-- **Image Downloading** — Async download with perceptual deduplication
-- **Readable Output** — Markdown exports for human consumption
-- **REST API** — Submit and manage crawl jobs over HTTP
-- **Docker Support** — Single-command containerized deployment
+- Same-domain breadth-first crawling with URL normalization, tracking-parameter removal, deduplication, depth limits, and page limits.
+- `robots.txt` checks, user-agent rotation, configurable request delays, and exponential retry backoff.
+- Static HTTP fetching plus optional Playwright/Chromium rendering for likely JavaScript-heavy pages.
+- Text extraction: title, headings, meta description, readable body text, timestamp, and word count.
+- Image metadata and optional downloads with minimum-size filtering and perceptual deduplication.
+- Parquet, CSV, or JSONL datasets; raw-HTML archives; Markdown exports; crawl reports; and SHA-256 manifests.
+- A FastAPI service for creating jobs, checking their status, and downloading results.
 
----
+## Tech stack
 
-## Requirements
+| Area | Technology |
+|---|---|
+| Runtime and CLI | Python 3.11+, Typer, Rich |
+| Crawling | aiohttp, urllib.robotparser |
+| Parsing | Beautiful Soup, lxml, readability-lxml, chardet |
+| Dynamic rendering | Playwright and Chromium |
+| Data and images | pandas, PyArrow, Pillow, imagehash |
+| API and validation | FastAPI, Uvicorn, Pydantic |
+| Logging and deployment | structlog, Docker, Docker Compose |
 
-- Docker and Docker Compose
-- Alternatively, Python 3.11+ for local execution
+## Quick start
 
----
-
-## Quick Start
-
-### Using Docker (recommended)
+### Docker API
 
 ```bash
 docker compose up -d
+curl http://localhost:8000/
 ```
 
-The API server starts on `http://localhost:8000`. Interactive documentation is available at `/docs`.
+Interactive API documentation: `http://localhost:8000/docs`.
 
-### Submit a crawl via API
-
-```bash
-curl -X POST http://localhost:8000/api/crawl \
-  -H "Content-Type: application/json" \
-  -d '{"url": "https://example.com", "max_depth": 2, "page_limit": 50}'
-```
-
-### Using the CLI inside the container
+### Local CLI
 
 ```bash
-docker compose exec pipeline-api /entrypoint.sh crawl \
-  --url https://example.com \
-  --depth 2 \
-  --limit 50 \
-  --format parquet
-```
-
-### Local execution (without Docker)
-
-```bash
+python -m venv .venv
 pip install -r requirements.txt
 playwright install chromium
-
-# Run a crawl
 python main.py --url https://example.com --depth 2 --limit 50
-
-# Start the API server
-python main.py serve --port 8000
 ```
 
----
+Use `--no-dynamic` when Chromium is not installed.
 
-## CLI Reference
+## Main options
 
-```
-python main.py [OPTIONS]
-```
+| Option | Default |
+|---|---:|
+| `--depth`, `--limit` | 3, 100 |
+| `--rate-limit` | 1.0 seconds |
+| `--format` | parquet |
+| `--output-dir` | site_dataset |
+| `--no-raw-html`, `--no-images` | off |
 
-| Option | Short | Default | Description |
-|---|---|---|---|
-| `--url` | `-u` | *(required)* | Starting URL to crawl |
-| `--depth` | `-d` | `3` | Maximum crawl depth (BFS) |
-| `--limit` | `-l` | `100` | Maximum number of pages |
-| `--rate-limit` | `-r` | `1.0` | Seconds between requests |
-| `--output-dir` | `-o` | `site_dataset` | Output directory path |
-| `--format` | `-f` | `parquet` | Export format: `parquet`, `csv`, `jsonl` |
-| `--no-raw-html` | | `false` | Skip saving raw HTML files |
-| `--no-images` | | `false` | Skip downloading images |
-| `--no-dynamic` | | `false` | Disable Playwright fallback |
-| `--log-level` | | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `--json-logs` | | `false` | Output structured JSON logs |
+Run `python main.py --help` for all CLI options.
 
-```
-python main.py serve [OPTIONS]
-```
+## API
 
-| Option | Short | Default | Description |
-|---|---|---|---|
-| `--host` | `-h` | `0.0.0.0` | Server bind address |
-| `--port` | `-p` | `8000` | Server port |
-| `--reload` | | `false` | Auto-reload on code changes |
+| Method | Endpoint |
+|---|---|
+| POST | `/api/crawl` |
+| GET | `/api/jobs`, `/api/jobs/{job_id}` |
+| GET | `/api/jobs/{job_id}/<result>` |
+| DELETE | `/api/jobs/{job_id}` |
 
----
+Jobs run in the background. Download endpoints require a completed job.
+Available result names are `report`, `pages`, `images`, and `download`.
 
-## API Endpoints
+## Output
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/` | Health check |
-| `POST` | `/api/crawl` | Submit a new crawl job |
-| `GET` | `/api/jobs` | List all jobs (optional `?status=` filter) |
-| `GET` | `/api/jobs/{id}` | Get job status and report |
-| `GET` | `/api/jobs/{id}/report` | Download crawl report (JSON) |
-| `GET` | `/api/jobs/{id}/pages` | Download pages dataset |
-| `GET` | `/api/jobs/{id}/images` | Download images dataset |
-| `GET` | `/api/jobs/{id}/download` | Download full dataset (ZIP) |
-| `DELETE` | `/api/jobs/{id}` | Delete a job and its data |
+Each crawl writes an output directory containing tabular `pages` and (when available) `images` data in the selected format, `crawl_report.json`, `manifest.json`, readable Markdown, raw HTML archives, and downloaded images. The pages schema is `url`, `title`, `headings`, `content`, `meta_description`, `crawl_date`, and `word_count`.
 
-Full interactive documentation is available at `http://localhost:8000/docs` when the server is running.
+See [Output Format](docs/output-format.md) for fields and directory details.
 
----
+## Important notes
 
-## Output Structure
+- Crawl only sites you are authorized to access; choose conservative limits and delays.
+- The crawler checks `robots.txt`, but its advertised crawl-delay is read, not automatically enforced; `--rate-limit` is the enforced delay.
+- API job status is in memory and does not survive a service restart, although job files persist in `PIPELINE_DATA_DIR`.
+- The API has permissive CORS and no authentication. Restrict it before production use.
 
-Each crawl produces the following directory structure:
-
-```
-output_dir/
-├── pages.parquet            # Structured page data
-├── images.parquet           # Image metadata
-├── crawl_report.json        # Summary statistics
-├── manifest.json            # File listing with checksums
-├── readable/
-│   ├── all_pages.md         # Combined readable export
-│   └── {page_slug}.md       # Individual page exports
-├── raw_html/
-│   └── {domain}/
-│       ├── {hash}.html.gz   # Compressed HTML
-│       └── {hash}.meta.json # Fetch metadata
-└── images/
-    └── {domain}/
-        └── {hash}.{ext}     # Downloaded images
-```
-
-**Page fields:** `url`, `title`, `headings`, `content`, `meta_description`, `crawl_date`, `word_count`
-
-**Image fields:** `image_path`, `source_page`, `alt_text`, `image_url`
-
----
-
-## Configuration
-
-The `POST /api/crawl` endpoint accepts the following request body:
-
-```json
-{
-  "url": "https://example.com",
-  "max_depth": 3,
-  "page_limit": 100,
-  "rate_limit": 1.0,
-  "output_format": "parquet",
-  "save_raw_html": true,
-  "download_images": true,
-  "dynamic_fallback": true
-}
-```
-
-All fields except `url` are optional and use sensible defaults.
-
----
-
-## Architecture
-
-```
-main.py                     CLI + API entry point
-├── app/
-│   ├── api.py              FastAPI REST interface
-│   ├── job_manager.py      Job orchestration
-│   ├── crawler.py          BFS crawl engine
-│   ├── fetcher.py          Async HTTP + Playwright fetcher
-│   ├── frontier.py         URL queue and deduplication
-│   ├── robots.py           Robots.txt compliance
-│   ├── parser.py           HTML parsing (readability-lxml)
-│   ├── structurer.py       Data aggregation and export
-│   ├── raw_storage.py      Raw HTML archival
-│   ├── dataset_storage.py  Manifest and ZIP packaging
-│   ├── config.py           Pydantic configuration models
-│   ├── logger.py           Structured logging (structlog)
-│   └── extractors/
-│       ├── text.py         Title, headings, meta extraction
-│       ├── link.py         Internal/external link classification
-│       └── image.py        Image download and deduplication
-├── Dockerfile              Multi-stage build (python:3.11-slim)
-├── docker-compose.yml      Container orchestration
-└── entrypoint.sh           Container entrypoint
-```
-
----
-
-## Docker Configuration
-
-The `docker-compose.yml` exposes port `8000` and mounts two volumes:
-
-- `crawler_data` — Persistent storage for API job data (`/app/jobs`)
-- Host Downloads folder — Bind mount for CLI output (`/app/downloads`)
-
-Resource limits are set to 2 GB memory with a 512 MB reservation.
-
-Environment variables:
-
-| Variable | Default | Description |
-|---|---|---|
-| `PIPELINE_DATA_DIR` | `/app/jobs` | Internal job storage path |
-| `PORT` | `8000` | API server port |
-| `WORKERS` | `1` | Uvicorn worker count |
-| `PURUCRAWLER_DOWNLOADS` | `C:/Users/.../Downloads/PuruCrawler` | Host path for CLI output |
-
----
-
-## Testing
+## Development
 
 ```bash
 pip install -r requirements.txt
 pytest tests/
 ```
 
----
-
-## Dependencies
-
-| Package | Purpose |
-|---|---|
-| aiohttp | Async HTTP client |
-| beautifulsoup4, lxml | HTML parsing |
-| readability-lxml | Content extraction |
-| pandas, pyarrow | Data processing and Parquet export |
-| Pillow, imagehash | Image processing and deduplication |
-| playwright | Dynamic page rendering |
-| fastapi, uvicorn | REST API server |
-| typer, rich | CLI interface |
-| structlog | Structured logging |
-| pydantic | Configuration validation |
-| chardet | Encoding detection |
-
----
-
-## License
-
-This project is provided as-is for educational and personal use.
+Extended guides: [Getting Started](docs/getting-started.md), [CLI Reference](docs/cli-reference.md), [API Reference](docs/api-reference.md), and [Architecture](docs/architecture.md).

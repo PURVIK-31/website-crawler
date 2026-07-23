@@ -50,7 +50,7 @@ The `images` file contains one row per image found across all crawled pages.
 
 | Field | Type | Description |
 |---|---|---|
-| `image_path` | string | Local file path relative to the output directory (empty if downloading was disabled) |
+| `image_path` | string | Local path recorded by the crawler process (empty if downloading was disabled) |
 | `source_page` | string | URL of the page where the image was found |
 | `alt_text` | string | Alt text from the `<img>` tag |
 | `image_url` | string | Original absolute URL of the image |
@@ -96,7 +96,7 @@ The `manifest.json` file lists every file in the output directory with its size 
 
 ```json
 {
-  "created_at": "2026-02-23T10:01:30Z",
+  "created": "2026-02-23T10:01:30Z",
   "total_files": 8,
   "files": [
     {

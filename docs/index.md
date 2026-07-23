@@ -11,7 +11,7 @@ The pipeline provides two interfaces — a command-line tool and a REST API — 
 Key capabilities:
 
 - **Breadth-first crawl engine** with configurable depth, page limits, and rate limiting
-- **Robots.txt compliance** with crawl-delay support
+- **Robots.txt checks** before fetching each page
 - **Content extraction** covering titles, headings, meta descriptions, body text, images, and links
 - **Dynamic rendering** via Playwright/Chromium for JavaScript-heavy pages
 - **Multiple export formats** — Parquet, CSV, and JSONL
