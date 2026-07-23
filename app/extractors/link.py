@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 from urllib.parse import urljoin, urlparse
-from typing import Any
 
 import structlog
 from bs4 import BeautifulSoup

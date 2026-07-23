@@ -25,6 +25,10 @@ chardet>=5.0.0
 
 # Content dedup
 simhash>=2.1.0
+xxhash>=3.5.0
+
+# Optional knowledge retrieval (enabled with KNOWLEDGE_ENABLE_EMBEDDINGS=true)
+lancedb>=0.6.0
 
 # Dynamic rendering (optional)
 playwright>=1.40.0

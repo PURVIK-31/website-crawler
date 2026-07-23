@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
-from typing import Any
 
 import structlog
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
@@ -47,6 +45,8 @@ class Crawler:
         self.extractor_pipeline = ExtractorPipeline(
             output_dir=config.output_dir,
             allowed_domains=config.allowed_domains,
+            min_image_size=config.min_image_size,
+            download_images=config.download_images,
         )
 
         if config.save_raw_html:

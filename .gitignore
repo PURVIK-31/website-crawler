@@ -22,3 +22,6 @@ Thumbs.db
 # Environment
 .env
 *.log
+
+# Runtime knowledge assets, cache, and derived vector indexes
+storage/

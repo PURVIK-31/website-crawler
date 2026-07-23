@@ -60,6 +60,11 @@ class DataStructurer:
         """Record a crawl error."""
         self._errors.append({"url": url, "error": error})
 
+    @property
+    def page_records(self) -> list[dict[str, Any]]:
+        """Return copies for optional downstream processing without mutation."""
+        return [dict(page) for page in self._pages]
+
     # ── export ────────────────────────────────────────────────────────
 
     def export(self, output_dir: str, fmt: str = "parquet") -> dict[str, str]:
@@ -67,29 +72,20 @@ class DataStructurer:
         os.makedirs(output_dir, exist_ok=True)
         paths: dict[str, str] = {}
 
-        # Pages
-        if self._pages:
-            cols = ["url", "title", "headings", "content", "meta_description", "crawl_date", "word_count"]
-            df = pd.DataFrame(self._pages)
+        datasets = {
+            "pages": (self._pages, ["url", "title", "headings", "content", "meta_description", "crawl_date", "word_count"]),
+            "images": (self._images, ["image_path", "source_page", "alt_text", "image_url"]),
+        }
+        for name, (records, cols) in datasets.items():
+            if not records:
+                continue
+            df = pd.DataFrame(records)
             for c in cols:
                 if c not in df.columns:
                     df[c] = ""
-            df = df[cols]
-            pages_path = self._write_df(df, output_dir, "pages", fmt)
-            paths["pages"] = pages_path
-            logger.info("pages_exported", rows=len(df), path=pages_path)
-
-        # Images
-        if self._images:
-            cols = ["image_path", "source_page", "alt_text", "image_url"]
-            df = pd.DataFrame(self._images)
-            for c in cols:
-                if c not in df.columns:
-                    df[c] = ""
-            df = df[cols]
-            images_path = self._write_df(df, output_dir, "images", fmt)
-            paths["images"] = images_path
-            logger.info("images_exported", rows=len(df), path=images_path)
+            path = self._write_df(df[cols], output_dir, name, fmt)
+            paths[name] = path
+            logger.info(f"{name}_exported", rows=len(df), path=path)
 
         # Report
         report_path = os.path.join(output_dir, "crawl_report.json")

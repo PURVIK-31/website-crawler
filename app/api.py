@@ -17,21 +17,23 @@ import shutil
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from pathlib import Path
 from typing import Any, Optional
 
 import structlog
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 from urllib.parse import urlparse
 
 from app.config import CrawlConfig
-from app.crawler import Crawler
 from app.dataset_storage import DatasetStorage
+from app.knowledge.assets import AssetStore
+from app.knowledge.errors import AssetNotFoundError, ConfigurationError
+from app.knowledge.pipeline import KnowledgePipeline
+from app.knowledge.settings import KnowledgeSettings
+from app.knowledge.vectors import LanceDBIndexer
 from app.logger import setup_logging
-from app.structurer import DataStructurer
 
 # ── setup ─────────────────────────────────────────────────────────────
 
@@ -57,6 +59,8 @@ app.add_middleware(
 
 DATA_DIR = os.environ.get("PIPELINE_DATA_DIR", "jobs")
 os.makedirs(DATA_DIR, exist_ok=True)
+KNOWLEDGE_SETTINGS = KnowledgeSettings.from_env()
+KNOWLEDGE_PIPELINE = KnowledgePipeline(KNOWLEDGE_SETTINGS)
 
 
 # ── models ────────────────────────────────────────────────────────────
@@ -108,9 +112,42 @@ class JobInfo(BaseModel):
     error: Optional[str] = None
 
 
+class SearchRequest(BaseModel):
+    asset_id: str = Field(..., min_length=1)
+    asset_version: str = Field(..., min_length=1)
+    query: str = Field(..., min_length=1)
+    limit: int = Field(default=5, ge=1, le=50)
+
+
+class AskRequest(BaseModel):
+    asset_id: str = Field(..., min_length=1)
+    asset_version: str = Field(..., min_length=1)
+    question: str = Field(..., min_length=1)
+    limit: int = Field(default=5, ge=1, le=50)
+
+
 # ── in-memory job registry ────────────────────────────────────────────
 
 _jobs: dict[str, dict[str, Any]] = {}
+
+
+def _get_job(job_id: str, require_completed: bool = False) -> dict[str, Any]:
+    """Look up a job, raising the appropriate HTTP error if unavailable."""
+    job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+    if require_completed and job["status"] != JobStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail=f"Job status is '{job['status']}', not completed.")
+    return job
+
+
+def _dataset_file_response(job: dict[str, Any], name: str) -> FileResponse:
+    """Serve a dataset file (pages/images) in whichever format it was exported."""
+    for ext in ("parquet", "csv", "jsonl"):
+        path = os.path.join(job["output_dir"], f"{name}.{ext}")
+        if os.path.exists(path):
+            return FileResponse(path, filename=f"{name}.{ext}")
+    raise HTTPException(status_code=404, detail=f"{name.capitalize()} file not found.")
 
 
 # ── background crawl task ─────────────────────────────────────────────
@@ -121,22 +158,12 @@ async def _run_crawl(job_id: str, config: CrawlConfig) -> None:
     logger.info("job_started", job_id=job_id, url=config.start_url)
 
     try:
-        structurer = DataStructurer()
-        crawler = Crawler(config=config, structurer=structurer)
-        await crawler.crawl()
-
-        # Export
-        paths = structurer.export(output_dir=config.output_dir, fmt=config.output_format)
-
-        # Manifest
-        ds = DatasetStorage(config.output_dir)
-        ds.create_manifest()
-
-        report = structurer.generate_report()
+        report, manifest = await KNOWLEDGE_PIPELINE.ingest(config, asset_id=job_id)
         _jobs[job_id]["status"] = JobStatus.COMPLETED
         _jobs[job_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
         _jobs[job_id]["report"] = report
-        logger.info("job_completed", job_id=job_id, report=report)
+        _jobs[job_id]["asset_version"] = manifest.asset_version
+        logger.info("job_completed", job_id=job_id, report=report, asset_id=manifest.asset_id)
 
     except Exception as exc:
         _jobs[job_id]["status"] = JobStatus.FAILED
@@ -217,9 +244,7 @@ async def list_jobs(
 @app.get("/api/jobs/{job_id}", response_model=JobInfo, tags=["Jobs"])
 async def get_job(job_id: str):
     """Get the status and report for a specific job."""
-    if job_id not in _jobs:
-        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
-    job = _jobs[job_id]
+    job = _get_job(job_id)
     return JobInfo(
         job_id=job["job_id"],
         status=job["status"],
@@ -234,12 +259,7 @@ async def get_job(job_id: str):
 @app.get("/api/jobs/{job_id}/report", tags=["Results"])
 async def get_report(job_id: str):
     """Download the crawl_report.json for a completed job."""
-    if job_id not in _jobs:
-        raise HTTPException(status_code=404, detail="Job not found.")
-    job = _jobs[job_id]
-    if job["status"] != JobStatus.COMPLETED:
-        raise HTTPException(status_code=400, detail=f"Job status is '{job['status']}', not completed.")
-
+    job = _get_job(job_id, require_completed=True)
     report_path = os.path.join(job["output_dir"], "crawl_report.json")
     if not os.path.exists(report_path):
         raise HTTPException(status_code=404, detail="Report file not found.")
@@ -249,45 +269,21 @@ async def get_report(job_id: str):
 @app.get("/api/jobs/{job_id}/pages", tags=["Results"])
 async def get_pages(job_id: str):
     """Download the pages dataset for a completed job."""
-    if job_id not in _jobs:
-        raise HTTPException(status_code=404, detail="Job not found.")
-    job = _jobs[job_id]
-    if job["status"] != JobStatus.COMPLETED:
-        raise HTTPException(status_code=400, detail=f"Job status is '{job['status']}', not completed.")
-
-    # Find the pages file (could be .parquet, .csv, or .jsonl)
-    for ext in ("parquet", "csv", "jsonl"):
-        path = os.path.join(job["output_dir"], f"pages.{ext}")
-        if os.path.exists(path):
-            return FileResponse(path, filename=f"pages.{ext}")
-    raise HTTPException(status_code=404, detail="Pages file not found.")
+    job = _get_job(job_id, require_completed=True)
+    return _dataset_file_response(job, "pages")
 
 
 @app.get("/api/jobs/{job_id}/images", tags=["Results"])
 async def get_images(job_id: str):
     """Download the images dataset for a completed job."""
-    if job_id not in _jobs:
-        raise HTTPException(status_code=404, detail="Job not found.")
-    job = _jobs[job_id]
-    if job["status"] != JobStatus.COMPLETED:
-        raise HTTPException(status_code=400, detail=f"Job status is '{job['status']}', not completed.")
-
-    for ext in ("parquet", "csv", "jsonl"):
-        path = os.path.join(job["output_dir"], f"images.{ext}")
-        if os.path.exists(path):
-            return FileResponse(path, filename=f"images.{ext}")
-    raise HTTPException(status_code=404, detail="Images file not found.")
+    job = _get_job(job_id, require_completed=True)
+    return _dataset_file_response(job, "images")
 
 
 @app.get("/api/jobs/{job_id}/download", tags=["Results"])
 async def download_dataset(job_id: str):
     """Download the entire dataset as a ZIP archive."""
-    if job_id not in _jobs:
-        raise HTTPException(status_code=404, detail="Job not found.")
-    job = _jobs[job_id]
-    if job["status"] != JobStatus.COMPLETED:
-        raise HTTPException(status_code=400, detail=f"Job status is '{job['status']}', not completed.")
-
+    job = _get_job(job_id, require_completed=True)
     output_dir = job["output_dir"]
     zip_path = output_dir + ".zip"
 
@@ -298,22 +294,75 @@ async def download_dataset(job_id: str):
     return FileResponse(zip_path, media_type="application/zip", filename=f"{job_id}_dataset.zip")
 
 
+@app.get("/api/assets", tags=["Knowledge"])
+async def list_assets():
+    """List durable v2 asset manifests."""
+    return [manifest.model_dump(mode="json") for manifest in AssetStore(KNOWLEDGE_SETTINGS.storage_root).list_manifests()]
+
+
+@app.get("/api/assets/{asset_id}/{asset_version}/manifest", tags=["Knowledge"])
+async def get_asset_manifest(asset_id: str, asset_version: str):
+    """Return a versioned knowledge asset manifest."""
+    try:
+        return AssetStore(KNOWLEDGE_SETTINGS.storage_root).read_manifest(asset_id, asset_version).model_dump(mode="json")
+    except AssetNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/search", tags=["Knowledge"])
+async def search(request: SearchRequest):
+    """Search one explicit knowledge asset/version using its embedding profile."""
+    if not KNOWLEDGE_SETTINGS.enable_embeddings:
+        raise HTTPException(status_code=503, detail="Embeddings are disabled for this deployment.")
+    try:
+        manifest = AssetStore(KNOWLEDGE_SETTINGS.storage_root).read_manifest(request.asset_id, request.asset_version)
+        if not manifest.provider_profiles:
+            raise HTTPException(status_code=409, detail="This asset has no embeddings.")
+        profile_id = manifest.provider_profiles[0]
+        deployment_profile = KNOWLEDGE_PIPELINE.embedding_provider.profile_id
+        if profile_id != deployment_profile:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "embedding_profile_mismatch",
+                    "message": "Query embedding profile does not match the asset's index.",
+                    "requested_profile": deployment_profile,
+                    "asset_profile": profile_id,
+                },
+            )
+        vector = (await KNOWLEDGE_PIPELINE.embedding_provider.embed([request.query]))[0]
+        rows = await asyncio.to_thread(
+            LanceDBIndexer(KNOWLEDGE_SETTINGS.storage_root / "vectors", profile_id).search,
+            request.asset_id, request.asset_version, vector, request.limit,
+        )
+        return {"asset_id": request.asset_id, "asset_version": request.asset_version, "results": rows}
+    except AssetNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/api/ask", tags=["Knowledge"])
+async def ask(request: AskRequest):
+    """Reserved grounded-answer endpoint until an LLM provider is configured."""
+    raise HTTPException(status_code=503, detail="No LLM provider is configured for grounded answers.")
+
+
 @app.delete("/api/jobs/{job_id}", tags=["Jobs"])
 async def delete_job(job_id: str):
     """Delete a completed/failed job and its data."""
-    if job_id not in _jobs:
-        raise HTTPException(status_code=404, detail="Job not found.")
-    job = _jobs[job_id]
+    job = _get_job(job_id)
     if job["status"] == JobStatus.RUNNING:
         raise HTTPException(status_code=400, detail="Cannot delete a running job.")
 
     # Clean up files
     output_dir = job.get("output_dir", "")
-    if output_dir and os.path.exists(output_dir):
-        shutil.rmtree(output_dir, ignore_errors=True)
-    zip_path = output_dir + ".zip"
-    if os.path.exists(zip_path):
-        os.remove(zip_path)
+    if output_dir:
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir, ignore_errors=True)
+        zip_path = output_dir + ".zip"
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
 
     del _jobs[job_id]
     return {"message": f"Job '{job_id}' deleted."}

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
-import re
 from io import BytesIO
 from typing import Any, Optional
 from urllib.parse import urljoin, urlparse

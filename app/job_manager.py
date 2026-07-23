@@ -1,31 +1,19 @@
-"""Job Manager — validates inputs, creates config, and launches the crawl."""
+"""Compatibility facade for the legacy CLI crawl command."""
 
 from __future__ import annotations
 
 import asyncio
-import os
-import time
-from typing import Optional
 
 import structlog
 
 from app.config import CrawlConfig
-from app.crawler import Crawler
-from app.dataset_storage import DatasetStorage
-from app.structurer import DataStructurer
+from app.knowledge.pipeline import KnowledgePipeline
 
 logger = structlog.get_logger(__name__)
 
 
 class JobManager:
-    """Entry point that orchestrates an entire crawl job.
-
-    1. Validate inputs → build ``CrawlConfig``.
-    2. Create output directories.
-    3. Launch the ``Crawler``.
-    4. Export structured data (Parquet/CSV/JSONL).
-    5. Create manifest and print summary.
-    """
+    """Build a legacy crawl configuration and delegate to KnowledgePipeline."""
 
     def __init__(
         self,
@@ -52,39 +40,11 @@ class JobManager:
         )
 
     def run(self) -> dict:
-        """Synchronous entry — runs the async pipeline and returns the report."""
+        """Synchronous CLI entry point."""
         return asyncio.run(self.run_async())
 
     async def run_async(self) -> dict:
-        """Async entry — performs the full crawl lifecycle."""
-        cfg = self.config
-        logger.info(
-            "job_started",
-            start_url=cfg.start_url,
-            max_depth=cfg.max_depth,
-            page_limit=cfg.page_limit,
-            rate_limit=cfg.rate_limit,
-            output_dir=cfg.output_dir,
-        )
-
-        # ── prepare output ────────────────────────────────────────────
-        os.makedirs(cfg.output_dir, exist_ok=True)
-
-        structurer = DataStructurer()
-
-        # ── crawl ─────────────────────────────────────────────────────
-        crawler = Crawler(config=cfg, structurer=structurer)
-        await crawler.crawl()
-
-        # ── export ────────────────────────────────────────────────────
-        paths = structurer.export(output_dir=cfg.output_dir, fmt=cfg.output_format)
-        logger.info("data_exported", paths=paths)
-
-        # ── manifest ──────────────────────────────────────────────────
-        ds = DatasetStorage(cfg.output_dir)
-        ds.create_manifest()
-
-        # ── report ────────────────────────────────────────────────────
-        report = structurer.generate_report()
-        logger.info("job_complete", report=report)
+        """Run legacy crawl/export plus optional knowledge asset ingestion."""
+        report, manifest = await KnowledgePipeline().ingest(self.config)
+        logger.info("job_complete", report=report, asset_id=manifest.asset_id)
         return report

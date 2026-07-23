@@ -92,4 +92,7 @@ pip install -r requirements.txt
 pytest tests/
 ```
 
+The suite (43 tests) covers the extractors, URL frontier, HTML parser, and the
+knowledge ingestion pipeline (chunking, caching, and asset persistence).
+
 Extended guides: [Getting Started](docs/getting-started.md), [CLI Reference](docs/cli-reference.md), [API Reference](docs/api-reference.md), and [Architecture](docs/architecture.md).

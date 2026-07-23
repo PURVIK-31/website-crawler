@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
-import pytest
 from bs4 import BeautifulSoup
 
 from app.extractors.text import TextExtractor

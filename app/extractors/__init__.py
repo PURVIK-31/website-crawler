@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import structlog
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from bs4 import BeautifulSoup
 
 from app.extractors.text import TextExtractor
 from app.extractors.image import ImageExtractor
@@ -25,15 +28,25 @@ class ExtractionResult:
 class ExtractorPipeline:
     """Runs text, image, and link extractors sequentially and returns aggregated results."""
 
-    def __init__(self, output_dir: str, allowed_domains: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        output_dir: str,
+        allowed_domains: list[str] | None = None,
+        min_image_size: int = 100,
+        download_images: bool = True,
+    ) -> None:
         self.text_extractor = TextExtractor()
-        self.image_extractor = ImageExtractor(output_dir=output_dir)
+        self.image_extractor = ImageExtractor(
+            output_dir=output_dir,
+            min_size=min_image_size,
+            download=download_images,
+        )
         self.link_extractor = LinkExtractor(allowed_domains=allowed_domains or [])
 
     async def run(
         self,
         url: str,
-        soup: "BeautifulSoup",  # noqa: F821
+        soup: BeautifulSoup,
         readable_text: str,
     ) -> ExtractionResult:
         """Execute all extractors and return combined results."""

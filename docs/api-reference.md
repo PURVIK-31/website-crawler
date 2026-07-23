@@ -230,3 +230,24 @@ All error responses use the standard format:
 | `400` | Bad request (invalid input, job not in correct state) |
 | `404` | Job or file not found |
 | `422` | Validation error (malformed request body) |
+
+---
+
+## Knowledge Endpoints (v2)
+
+Knowledge ingestion is additive and remains optional. Persistent assets are
+stored under `KNOWLEDGE_STORAGE_ROOT` (default: `storage`). Search requests
+always name both an asset and version, preventing accidental cross-crawl
+retrieval.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/assets` | List durable asset manifests. |
+| `GET` | `/api/assets/{asset_id}/{asset_version}/manifest` | Get one manifest. |
+| `POST` | `/api/search` | Search a versioned embedded asset. |
+| `POST` | `/api/ask` | Reserved for grounded answers; returns `503` until an LLM provider is configured. |
+
+`POST /api/search` accepts `asset_id`, `asset_version`, `query`, and optional
+`limit`. It returns matching chunks with their source URL and title. Enable
+embeddings with `KNOWLEDGE_ENABLE_EMBEDDINGS=true`; otherwise search returns
+`503` and normal crawling remains available.

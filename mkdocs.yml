@@ -39,6 +39,7 @@ nav:
   - API Reference: api-reference.md
   - Output Format: output-format.md
   - Architecture: architecture.md
+  - Knowledge Invariants: invariants.md
 
 plugins:
   - search

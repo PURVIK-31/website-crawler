@@ -6,7 +6,7 @@ import hashlib
 import heapq
 import re
 from dataclasses import dataclass, field
-from urllib.parse import urljoin, urlparse, urlunparse, parse_qs, urlencode
+from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 from typing import Optional
 
 import structlog
