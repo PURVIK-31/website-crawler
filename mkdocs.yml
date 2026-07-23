@@ -39,7 +39,14 @@ nav:
   - API Reference: api-reference.md
   - Output Format: output-format.md
   - Architecture: architecture.md
+  - Deployment: deployment.md
   - Knowledge Invariants: invariants.md
+  - Architecture Decisions:
+    - Overview: adr/index.md
+    - ADR-0001 Record architecture decisions: adr/0001-record-architecture-decisions.md
+    - ADR-0002 Parquet canonical, LanceDB derived: adr/0002-parquet-canonical-lancedb-derived.md
+    - ADR-0003 Single-node v2 scope: adr/0003-single-node-v2-scope.md
+    - ADR-0004 Ephemeral jobs, durable assets: adr/0004-ephemeral-jobs-durable-assets.md
 
 plugins:
   - search
